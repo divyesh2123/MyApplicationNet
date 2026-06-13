@@ -1,5 +1,3 @@
-# ASP.NET Core (.NET Framework)
-
 trigger:
 - dev
 
@@ -55,7 +53,7 @@ stages:
     steps:
 
     - task: UseDotNet@2
-      displayName: Use .NET SDK
+      displayName: Use dotnet SDK
       inputs:
         packageType: sdk
         version: 8.0.x
@@ -108,9 +106,6 @@ stages:
   - deployment: Deploy
     displayName: Deploy Application
     environment: ${{ parameters.environment }}
-
-    pool:
-      name: "$(GroupName)"
 
     strategy:
       runOnce:
