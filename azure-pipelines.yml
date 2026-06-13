@@ -112,8 +112,13 @@ stages:
         deploy:
           steps:
 
-          - download: current
-            artifact: "$(ArtifactName)"
+          - task: DownloadBuildArtifacts@0
+            displayName: Download Artifact
+            inputs:
+              buildType: current
+              downloadType: single
+              artifactName: "$(ArtifactName)"
+              downloadPath: "$(Pipeline.Workspace)"
 
           - powershell: |
 
@@ -126,8 +131,18 @@ stages:
                     -Force
               }
 
+              $zip = Get-ChildItem `
+                        "$(Pipeline.Workspace)" `
+                        -Recurse `
+                        -Filter "WebApp.zip" |
+                     Select-Object -First 1
+
+              if ($null -eq $zip) {
+                  throw "WebApp.zip not found"
+              }
+
               Expand-Archive `
-                -Path "$(Pipeline.Workspace)\$(ArtifactName)\WebApp.zip" `
+                -Path $zip.FullName `
                 -DestinationPath "$(WebsitePath)" `
                 -Force
 
