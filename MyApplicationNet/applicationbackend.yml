@@ -1,0 +1,82 @@
+﻿# ASP.NET Core (.NET Framework)
+# Build and test ASP.NET Core projects targeting the full .NET Framework.
+# Add steps that publish symbols, save build artifacts, and more:
+# https://docs.microsoft.com/azure/devops/pipelines/languages/dotnet-core
+
+trigger:
+- dev
+
+pr: none
+
+parameters:
+- name: environment
+  displayName: Environment
+  type: string
+  default: DEV
+  values: 
+  - DEV
+  - UAT
+
+- name: deploydb
+  displayName: Deploy DB
+  type: boolean
+  default: false
+
+variables:
+  - group: ${{ parameters.environment }}
+  - name: solution
+    value: "**/*.sln"
+  - name: BuildPlatform
+    value: "Any CPU"
+  - name: BuildConfiguration
+    value: "Release" 
+  - name: ApiWorkingDirectory
+    value: '$(Agent.BuildDirectory)' 
+  - name: ArtifactName 
+    value: '$(Name)'
+
+stages:
+  - stage: Build
+    displayName: Build ${{ parameters.environment }}
+    jobs:
+    - job: Compile
+      pool:
+        vmImage: 'windows-latest'
+      steps:
+            
+      - task: UseDotNet@2
+        displayName: 'Use dot net SDK'
+        inputs:
+          packageType: 'sdk'
+          version: '8.0.x'
+
+      - task: NuGetToolInstaller@1
+        displayName: 'Install Nuget tools'
+
+      - task: NuGetCommand@2
+        displayName: 'Install Nuget packages'
+        inputs:
+          restoreSolution: '$(solution)'
+
+      - task: VSBuild@1
+        displayName: 'Build solution'
+        inputs:
+          solution: '$(solution)'
+          msbuildArgs: '/p:DeployOnBuild=true /p:WebPublishMethod=Package /p:PackageAsSingleFile=true /p:SkipInvalidConfigurations=true /p:DesktopBuildPackageLocation="$(build.artifactStagingDirectory)\WebApp.zip" /p:DeployIisAppPath="Default Web Site"'
+          platform: '$(buildPlatform)'
+          configuration: '$(buildConfiguration)'
+
+      - task: VSTest@2
+        displayName: 'Perform unit Tests'
+        inputs:
+          platform: '$(buildPlatform)'
+          configuration: '$(buildConfiguration)'
+          
+      - task: PublishBuildArtifacts@1        
+        displayName: 'Publish build Artifact'
+        inputs:
+          PathtoPublish: '$(build.artifactstagingdirectory)'
+          ArtifactName: '$(ArtifactName)'
+
+     
+
