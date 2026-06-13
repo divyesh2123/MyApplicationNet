@@ -105,7 +105,10 @@ stages:
 
   - deployment: Deploy
     displayName: Deploy Application
-    environment: ${{ parameters.environment }}
+
+    environment:
+      name: ${{ parameters.environment }}
+      resourceType: VirtualMachine
 
     strategy:
       runOnce:
@@ -119,6 +122,12 @@ stages:
               downloadType: single
               artifactName: "$(ArtifactName)"
               downloadPath: "$(Pipeline.Workspace)"
+
+          - powershell: |
+              Write-Host "Computer Name: $env:COMPUTERNAME"
+              hostname
+              Get-ChildItem "$(Pipeline.Workspace)" -Recurse
+            displayName: Verify Target Machine
 
           - powershell: |
 
@@ -146,7 +155,7 @@ stages:
                 -DestinationPath "$(WebsitePath)" `
                 -Force
 
-              $app = "$(WebsitePath)\appsettings.json"
+              $app = Join-Path "$(WebsitePath)" "appsettings.json"
 
               if (Test-Path $app) {
 
