@@ -1,7 +1,5 @@
+
 # ASP.NET Core (.NET Framework)
-# Build and test ASP.NET Core projects targeting the full .NET Framework.
-# Add steps that publish symbols, save build artifacts, and more:
-# https://docs.microsoft.com/azure/devops/pipelines/languages/dotnet-core
 
 trigger:
 - dev
@@ -9,74 +7,219 @@ trigger:
 pr: none
 
 parameters:
+
 - name: environment
   displayName: Environment
   type: string
   default: DEV
-  values: 
+
+  values:
   - DEV
   - UAT
+
 
 - name: deploydb
   displayName: Deploy DB
   type: boolean
   default: false
 
+
 variables:
-  - group: ${{ parameters.environment }}
-  - name: solution
-    value: "**/*.sln"
-  - name: BuildPlatform
-    value: "Any CPU"
-  - name: BuildConfiguration
-    value: "Release" 
-  - name: ApiWorkingDirectory
-    value: '$(Agent.BuildDirectory)' 
-  - name: ArtifactName 
-    value: '$(Name)'
+
+- group: ${{ parameters.environment }}
+
+- name: solution
+  value: "**/*.sln"
+
+- name: BuildPlatform
+  value: "Any CPU"
+
+- name: BuildConfiguration
+  value: "Release"
+
+- name: ApiWorkingDirectory
+  value: "$(Agent.BuildDirectory)"
+
+- name: ArtifactName
+  value: "$(Name)"
+
+
 
 stages:
-  - stage: Build
-    displayName: Build ${{ parameters.environment }}
-    jobs:
-    - job: Compile
-      pool:
-        vmImage: 'windows-latest'
-      steps:
-            
-      - task: UseDotNet@2
-        displayName: 'Use dot net SDK'
-        inputs:
-          packageType: 'sdk'
-          version: '8.0.x'
 
-      - task: NuGetToolInstaller@1
-        displayName: 'Install Nuget tools'
+# ======================
+# BUILD
+# ======================
 
-      - task: NuGetCommand@2
-        displayName: 'Install Nuget packages'
-        inputs:
-          restoreSolution: '$(solution)'
+- stage: Build
 
-      - task: VSBuild@1
-        displayName: 'Build solution'
-        inputs:
-          solution: '$(solution)'
-          msbuildArgs: '/p:DeployOnBuild=true /p:WebPublishMethod=Package /p:PackageAsSingleFile=true /p:SkipInvalidConfigurations=true /p:DesktopBuildPackageLocation="$(build.artifactStagingDirectory)\WebApp.zip" /p:DeployIisAppPath="Default Web Site"'
-          platform: '$(buildPlatform)'
-          configuration: '$(buildConfiguration)'
+  displayName: Build ${{ parameters.environment }}
 
-      - task: VSTest@2
-        displayName: 'Perform unit Tests'
-        inputs:
-          platform: '$(buildPlatform)'
-          configuration: '$(buildConfiguration)'
-          
-      - task: PublishBuildArtifacts@1        
-        displayName: 'Publish build Artifact'
-        inputs:
-          PathtoPublish: '$(build.artifactstagingdirectory)'
-          ArtifactName: '$(ArtifactName)'
+  jobs:
 
-     
+  - job: Compile
+
+    pool:
+      vmImage: windows-latest
+
+    steps:
+
+    - task: UseDotNet@2
+      displayName: Use dot net SDK
+
+      inputs:
+        packageType: sdk
+        version: 8.0.x
+
+
+    - task: NuGetToolInstaller@1
+      displayName: Install Nuget tools
+
+
+    - task: NuGetCommand@2
+      displayName: Install Nuget packages
+
+      inputs:
+        restoreSolution: "$(solution)"
+
+
+    - task: VSBuild@1
+      displayName: Build solution
+
+      inputs:
+        solution: "$(solution)"
+
+        msbuildArgs: >
+          /p:DeployOnBuild=true
+          /p:WebPublishMethod=Package
+          /p:PackageAsSingleFile=true
+          /p:SkipInvalidConfigurations=true
+          /p:DesktopBuildPackageLocation="$(build.artifactStagingDirectory)\WebApp.zip"
+          /p:DeployIisAppPath="Default Web Site"
+
+        platform: "$(BuildPlatform)"
+        configuration: "$(BuildConfiguration)"
+
+
+    - task: VSTest@2
+      displayName: Perform unit Tests
+
+      inputs:
+        platform: "$(BuildPlatform)"
+        configuration: "$(BuildConfiguration)"
+
+
+    - task: PublishBuildArtifacts@1
+
+      displayName: Publish build Artifact
+
+      inputs:
+        PathtoPublish: "$(build.artifactstagingdirectory)"
+        ArtifactName: "$(ArtifactName)"
+
+
+
+# ======================
+# DEPLOY
+# ======================
+
+- stage: Deploy
+
+  displayName: Deploy ${{ parameters.environment }}
+
+  dependsOn: Build
+
+  jobs:
+
+  - deployment: Deploy
+
+    displayName: Deploy Application
+
+    environment:
+      name: ${{ parameters.environment }}
+      resourceType: VirtualMachine
+
+    strategy:
+
+      runOnce:
+
+        deploy:
+
+          steps:
+
+          - download: current
+            artifact: "$(ArtifactName)"
+
+
+          - powershell: |
+
+              Import-Module WebAdministration
+
+
+              if (!(Test-Path "$(WebsitePath)")) {
+
+                  New-Item `
+                    -ItemType Directory `
+                    -Path "$(WebsitePath)"
+              }
+
+
+              Expand-Archive `
+                "$(Pipeline.Workspace)\$(ArtifactName)\WebApp.zip" `
+                -DestinationPath "$(WebsitePath)" `
+                -Force
+
+
+              $app =
+              "$(WebsitePath)\appsettings.json"
+
+
+              if (Test-Path $app) {
+
+                  $cfg =
+                  Get-Content $app -Raw |
+                  ConvertFrom-Json
+
+
+                  # SMTP ONLY
+
+                  $cfg.SmtpServer =
+                  "$(SmtpServer)"
+
+                  $cfg.Port =
+                  [int]"$(Port)"
+
+                  $cfg.SenderName =
+                  "$(SenderName)"
+
+                  $cfg.SenderEmail =
+                  "$(SenderEmail)"
+
+                  $cfg.Username =
+                  "$(Username)"
+
+                  $cfg.Password =
+                  "$(Password)"
+
+
+                  $cfg |
+                  ConvertTo-Json -Depth 100 |
+                  Set-Content $app
+
+              }
+
+
+              if (
+                Get-WebAppPoolState `
+                  -Name "$(Name)" `
+                  -ErrorAction SilentlyContinue
+              ) {
+
+                  Restart-WebAppPool "$(Name)"
+              }
+
+
+              Write-Host "Deployment completed"
+
+            displayName: Deploy IIS
 

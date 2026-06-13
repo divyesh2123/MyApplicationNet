@@ -12,18 +12,24 @@ parameters:
 - name: environment
   displayName: Environment
   type: string
-  default: DEV
+  default: DEV_Stable_SDApp
   values: 
-  - DEV
-  - UAT
-
+  #- DEV_SD6
+  #- DEV_Stable
+  - DEV_Stable_SDApp
+  #- UAT
+  - UAT_SDApp
+  #- TRAINING
+  - TRAINING_SDApp
+  #- PROD
+  - PROD_SDApp
 - name: deploydb
   displayName: Deploy DB
   type: boolean
   default: false
 
 variables:
-  - group: ${{ parameters.environment }}
+  - group: SMT_${{ parameters.environment }}
   - name: solution
     value: "**/*.sln"
   - name: BuildPlatform
@@ -31,9 +37,9 @@ variables:
   - name: BuildConfiguration
     value: "Release" 
   - name: ApiWorkingDirectory
-    value: '$(Agent.BuildDirectory)' 
+    value: '$(Agent.BuildDirectory)\s\SMT-APIService' 
   - name: ArtifactName 
-    value: '$(Name)'
+    value: 'UNICEF.$(AppName)'
 
 stages:
   - stage: Build
@@ -48,7 +54,7 @@ stages:
         displayName: 'Use dot net SDK'
         inputs:
           packageType: 'sdk'
-          version: '8.0.x'
+          version: '3.1.x'
 
       - task: NuGetToolInstaller@1
         displayName: 'Install Nuget tools'
@@ -78,5 +84,407 @@ stages:
           PathtoPublish: '$(build.artifactstagingdirectory)'
           ArtifactName: '$(ArtifactName)'
 
-     
+      - task: CredScan@2
+        displayName: 'Run Credential Scanner'
+        continueOnError: true
+        inputs:
+          toolMajorVersion: 'V2'
+          outputFormat: 'csv'
 
+      - task: PublishSecurityAnalysisLogs@2
+        continueOnError: true
+        displayName: 'Publish Security Analysis Logs'
+        inputs:    
+          AllTools: false
+          AntiMalware: false
+          BinSkim: false
+          CredScan: true
+          MSRD: false
+          RoslynAnalyzers: false
+          TSLint: false
+          ToolLogsNotFoundAction: 'Standard'
+
+      - task: PostAnalysis@1
+        displayName: 'Perform Post Analysis'
+        continueOnError: true
+        inputs:
+          AllTools: false
+          BinSkim: false
+          CredScan: true
+          RoslynAnalyzers: false
+          TSLint: false
+          ToolLogsNotFoundAction: 'Standard'
+
+  - stage: Deploy
+    displayName: Deploy ${{ parameters.environment }}
+    dependsOn: Build
+    condition: succeeded()
+    jobs:
+      - deployment: ${{ parameters.environment }}
+        displayName: Deploying to ${{ parameters.environment }}
+        pool:
+          vmImage: windows-latest
+        environment: ${{ parameters.environment }}
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: DownloadBuildArtifacts@0
+                  displayName: "Pull Artifact $(ArtifactName)"
+                  inputs:
+                    buildType: "current"
+                    ArtifactName: "$(ArtifactName)"
+                    downloadType: "single"
+                    downloadPath: "$(build.artifactstagingdirectory)"
+
+                - task: AzureRmWebAppDeployment@4
+                  inputs:
+                    ConnectionType: 'AzureRM'
+                    azureSubscription: '$(AzureSubscription)'
+                    appType: 'webApp'
+                    WebAppName: '$(AppName)'
+                    deployToSlotOrASE: true
+                    ResourceGroupName: '$(AzureResourceGroup)'
+                    SlotName: '$(AppSlot)'
+                    packageForLinux: '$(build.artifactstagingdirectory)/**/$(ArtifactName)/*.zip'
+
+                - task: AzureAppServiceSettings@1
+                  displayName: Azure App Service Settings
+                  inputs:
+                    azureSubscription: $(AzureSubscription)
+                    resourceGroupName: $(AzureResourceGroup)
+                    appName: '$(AppName)'
+                    slotName: '$(AppSlot)'                         
+                    AppSettings: |
+                      [
+                        {
+                            "name": "ANCM_ADDITIONAL_ERROR_PAGE_LINK",
+                            "value": "$(AppSettings_ANCM_ADDITIONAL_ERROR_PAGE_LINK)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "APPINSIGHTS_INSTRUMENTATIONKEY",
+                            "value": "$(AppSettings_APPINSIGHTS_INSTRUMENTATIONKEY)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "APPINSIGHTS_PROFILERFEATURE_VERSION",
+                            "value": "$(AppSettings_APPINSIGHTS_PROFILERFEATURE_VERSION)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "APPINSIGHTS_SNAPSHOTFEATURE_VERSION",
+                            "value": "$(AppSettings_APPINSIGHTS_SNAPSHOTFEATURE_VERSION)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "APPLICATIONINSIGHTS_CONNECTION_STRING",
+                            "value": "$(AppSettings_APPLICATIONINSIGHTS_CONNECTION_STRING)",
+                            "slotSetting": false
+                        },
+                        {
+                            "name": "ApplicationInsightsAgent_EXTENSION_VERSION",
+                            "value": "$(AppSettings_ApplicationInsightsAgent_EXTENSION_VERSION)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:AllowedHosts",
+                            "value": "$(AppSettings_ApplicationSettings_AllowedHosts)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:AzureAD:CallbackPath",
+                            "value": "$(AppSettings_ApplicationSettings_AzureAD_CallbackPath)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:AzureAD:ClientId",
+                            "value": "$(AppSettings_ApplicationSettings_AzureAD_ClientId)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:AzureAD:ClientSecret",
+                            "value": "$(AppSettings_ApplicationSettings_AzureAD_ClientSecret)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:AzureAD:Domain",
+                            "value": "$(AppSettings_ApplicationSettings_AzureAD_Domain)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:AzureAD:Instance",
+                            "value": "$(AppSettings_ApplicationSettings_AzureAD_Instance)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:AzureAD:ResetPasswordPolicyId",
+                            "value": "$(AppSettings_ApplicationSettings_AzureAD_ResetPasswordPolicyId)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:AzureAD:ResetPasswordPolicyUrl",
+                            "value": "$(AppSettings_ApplicationSettings_AzureAD_ResetPasswordPolicyUrl)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:AzureAD:ResponseType",
+                            "value": "$(AppSettings_ApplicationSettings_AzureAD_ResponseType)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:AzureAD:SignedOutCallbackPath",
+                            "value": "$(AppSettings_ApplicationSettings_AzureAD_SignedOutCallbackPath)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:AzureAD:SignUpSignInPolicyId",
+                            "value": "$(AppSettings_ApplicationSettings_AzureAD_SignUpSignInPolicyId)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:AzureAD:TenantId",
+                            "value": "$(AppSettings_ApplicationSettings_AzureAD_TenantId)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:AzureConnectionStrings",
+                            "value": "$(AppSettings_ApplicationSettings_AzureConnectionStrings)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:AzureStorageContainer",
+                            "value": "$(AppSettings_ApplicationSettings_AzureStorageContainer)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:DesktopLastSyncTime",
+                            "value": "$(AppSettings_ApplicationSettings_DesktopLastSyncTime)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:DesktopVersion",
+                            "value": "$(AppSettings_ApplicationSettings_DesktopVersion)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:EmailSettings:EmailFrom",
+                            "value": "$(AppSettings_ApplicationSettings_EmailSettings_EmailFrom)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:EmailSettings:EnableSsl",
+                            "value": "$(AppSettings_ApplicationSettings_EmailSettings_EnableSsl)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:EmailSettings:Host",
+                            "value": "$(AppSettings_ApplicationSettings_EmailSettings_Host)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:EmailSettings:Host_nossl",
+                            "value": "$(AppSettings_ApplicationSettings_EmailSettings_Host_nossl)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:EmailSettings:Host-smtp",
+                            "value": "$(AppSettings_ApplicationSettings_EmailSettings_Host_smtp)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:EmailSettings:Port",
+                            "value": "$(AppSettings_ApplicationSettings_EmailSettings_Port)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:EmailSettings:SendEmailNotification",
+                            "value": "$(AppSettings_ApplicationSettings_EmailSettings_SendEmailNotification)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:EncryptionKey",
+                            "value": "$(AppSettings_ApplicationSettings_EncryptionKey)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:IsDesktopApp",
+                            "value": "$(AppSettings_ApplicationSettings_IsDesktopApp)",
+                            "slotSetting": false
+                        },
+                        {
+                            "name": "ApplicationSettings:JwtSettings:Secret",
+                            "value": "$(AppSettings_ApplicationSettings_JwtSettings_Secret)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:Localization:CdnBaseUrl",
+                            "value": "$(AppSettings_ApplicationSettings_Localization_CdnBaseUrl)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:Localization:Environment",
+                            "value": "$(AppSettings_ApplicationSettings_Localization_Environment)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:Localization:Namespace",
+                            "value": "$(AppSettings_ApplicationSettings_Localization_Namespace)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:Localization:ProjectToken",
+                            "value": "$(AppSettings_ApplicationSettings_Localization_ProjectToken)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:MigrationSettings:IsMigrationTestEmail",
+                            "value": "$(AppSettings_ApplicationSettings_MigrationSettings_IsMigrationTestEmail)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:MigrationSettings:MigrateDataButtonEndDay",
+                            "value": "$(AppSettings_ApplicationSettings_MigrationSettings_MigrateDataButtonEndDay)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:MigrationSettings:MigrateDataButtonStartDay",
+                            "value": "$(AppSettings_ApplicationSettings_MigrationSettings_MigrateDataButtonStartDay)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:MigrationSettings:MigrateWarningPopupEndDay",
+                            "value": "$(AppSettings_ApplicationSettings_MigrationSettings_MigrateWarningPopupEndDay)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:MigrationSettings:MigrateWarningPopupStartDay",
+                            "value": "$(AppSettings_ApplicationSettings_MigrationSettings_MigrateWarningPopupStartDay)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:MigrationSettings:MigrationFirstEmailWarningDay",
+                            "value": "$(AppSettings_ApplicationSettings_MigrationSettings_MigrationFirstEmailWarningDay)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:MigrationSettings:MigrationSecondEmailWarningDay",
+                            "value": "$(AppSettings_ApplicationSettings_MigrationSettings_MigrationSecondEmailWarningDay)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:MigrationSettings:MigrationYear",
+                            "value": "$(AppSettings_ApplicationSettings_MigrationSettings_MigrationYear)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "ApplicationSettings:MigrationSettings:TestUserEmails",
+                            "value": "$(AppSettings_ApplicationSettings_MigrationSettings_TestUserEmails)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "AzureServicesAuthConnectionString",
+                            "value": "$(AppSettings_AzureServicesAuthConnectionString)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "DIAGNOSTICS_AZUREBLOBCONTAINERSASURL",
+                            "value": "$(AppSettings_DIAGNOSTICS_AZUREBLOBCONTAINERSASURL)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "DIAGNOSTICS_AZUREBLOBRETENTIONINDAYS",
+                            "value": "$(AppSettings_DIAGNOSTICS_AZUREBLOBRETENTIONINDAYS)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "DiagnosticServices_EXTENSION_VERSION",
+                            "value": "$(AppSettings_DiagnosticServices_EXTENSION_VERSION)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "InstrumentationEngine_EXTENSION_VERSION",
+                            "value": "$(AppSettings_InstrumentationEngine_EXTENSION_VERSION)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "MSDEPLOY_RENAME_LOCKED_FILES",
+                            "value": "$(AppSettings_MSDEPLOY_RENAME_LOCKED_FILES)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "Sentry:Debug",
+                            "value": "$(AppSettings_Sentry_Debug)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "Sentry:Dsn",
+                            "value": "$(AppSettings_Sentry_Dsn)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "Sentry:Environment",
+                            "value": "$(AppSettings_Sentry_Environment)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "Sentry:Release",
+                            "value": "$(Build.BuildNumber)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "Sentry:TracesSampleRate",
+                            "value": "$(AppSettings_Sentry_TracesSampleRate)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "SerilogFilePath:LogTableSchema",
+                            "value": "$(AppSettings_SerilogFilePath_LogTableSchema)",
+                            "slotSetting": false
+                        },
+                        {
+                            "name": "SnapshotDebugger_EXTENSION_VERSION",
+                            "value": "$(AppSettings_SnapshotDebugger_EXTENSION_VERSION)",
+                            "slotSetting": true
+                        },       
+                        {
+                            "name": "WEBSITE_DAAS_STORAGE_SASURI",
+                            "value": "$(AppSettings_WEBSITE_DAAS_STORAGE_SASURI)",
+                            "slotSetting": false
+                        },
+                        {
+                            "name": "WEBSITE_ENABLE_SYNC_UPDATE_SITE",
+                            "value": "$(AppSettings_WEBSITE_ENABLE_SYNC_UPDATE_SITE)",
+                            "slotSetting": false
+                        },
+                        {
+                            "name": "WEBSITE_NODE_DEFAULT_VERSION",
+                            "value": "$(AppSettings_WEBSITE_NODE_DEFAULT_VERSION)",
+                            "slotSetting": false
+                        },
+                        {
+                            "name": "XDT_MicrosoftApplicationInsights_BaseExtensions",
+                            "value": "$(AppSettings_XDT_MicrosoftApplicationInsights_BaseExtensions)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "XDT_MicrosoftApplicationInsights_Java",
+                            "value": "$(AppSettings_XDT_MicrosoftApplicationInsights_Java)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "XDT_MicrosoftApplicationInsights_Mode",
+                            "value": "$(AppSettings_XDT_MicrosoftApplicationInsights_Mode)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "XDT_MicrosoftApplicationInsights_NodeJS",
+                            "value": "$(AppSettings_XDT_MicrosoftApplicationInsights_NodeJS)",
+                            "slotSetting": true
+                        },
+                        {
+                            "name": "XDT_MicrosoftApplicationInsights_PreemptSdk",
+                            "value": "$(AppSettings_XDT_MicrosoftApplicationInsights_PreemptSdk)",
+                            "slotSetting": true
+                        }
+                      ]
