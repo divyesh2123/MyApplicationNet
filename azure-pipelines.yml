@@ -29,11 +29,8 @@ variables:
 - name: BuildConfiguration
   value: "Release"
 
-- name: ApiWorkingDirectory
-  value: "$(Agent.BuildDirectory)"
-
 - name: ArtifactName
-  value: "$(Name)"
+  value: "drop"
 
 stages:
 
@@ -42,9 +39,10 @@ stages:
 # ======================
 
 - stage: Build
-  displayName: Build ${{ parameters.environment }}
+  displayName: Build
 
   jobs:
+
   - job: Compile
 
     pool:
@@ -53,21 +51,17 @@ stages:
     steps:
 
     - task: UseDotNet@2
-      displayName: Use dotnet SDK
       inputs:
         packageType: sdk
         version: 8.0.x
 
     - task: NuGetToolInstaller@1
-      displayName: Install NuGet Tools
 
     - task: NuGetCommand@2
-      displayName: Restore NuGet Packages
       inputs:
         restoreSolution: "$(solution)"
 
     - task: VSBuild@1
-      displayName: Build Solution
       inputs:
         solution: "$(solution)"
         msbuildArgs: >
@@ -77,46 +71,49 @@ stages:
           /p:SkipInvalidConfigurations=true
           /p:DesktopBuildPackageLocation="$(Build.ArtifactStagingDirectory)\WebApp.zip"
           /p:DeployIisAppPath="Default Web Site"
+
         platform: "$(BuildPlatform)"
         configuration: "$(BuildConfiguration)"
 
     - task: VSTest@2
-      displayName: Run Unit Tests
       inputs:
         platform: "$(BuildPlatform)"
         configuration: "$(BuildConfiguration)"
 
     - task: PublishBuildArtifacts@1
-      displayName: Publish Build Artifact
       inputs:
         PathtoPublish: "$(Build.ArtifactStagingDirectory)"
         ArtifactName: "$(ArtifactName)"
+
 
 # ======================
 # DEPLOY
 # ======================
 
 - stage: Deploy
-  displayName: Deploy ${{ parameters.environment }}
+
   dependsOn: Build
   condition: succeeded()
 
   jobs:
 
   - deployment: Deploy
-    displayName: Deploy Application
 
-    environment:
-      name: ${{ parameters.environment }}
-      resourceType: VirtualMachine
+    timeoutInMinutes: 60
+
+    environment: ${{ parameters.environment }}
 
     strategy:
+
       runOnce:
+
         deploy:
+
           steps:
 
+          - checkout: none
+
           - task: DownloadBuildArtifacts@0
-            displayName: Download Artifact
             inputs:
               buildType: current
               downloadType: single
@@ -124,59 +121,71 @@ stages:
               downloadPath: "$(Pipeline.Workspace)"
 
           - powershell: |
-              Write-Host "Computer Name: $env:COMPUTERNAME"
+
+              Write-Host "Machine:"
               hostname
+
               Get-ChildItem "$(Pipeline.Workspace)" -Recurse
-            displayName: Verify Target Machine
+
+            displayName: Verify Deployment Target
+
 
           - powershell: |
 
               Import-Module WebAdministration
 
               if (!(Test-Path "$(WebsitePath)")) {
-                  New-Item `
-                    -ItemType Directory `
-                    -Path "$(WebsitePath)" `
-                    -Force
+
+                New-Item `
+                  -ItemType Directory `
+                  -Path "$(WebsitePath)" `
+                  -Force
+
               }
 
               $zip = Get-ChildItem `
-                        "$(Pipeline.Workspace)" `
-                        -Recurse `
-                        -Filter "WebApp.zip" |
-                     Select-Object -First 1
+                "$(Pipeline.Workspace)" `
+                -Recurse `
+                -Filter WebApp.zip |
+                Select-Object -First 1
 
-              if ($null -eq $zip) {
-                  throw "WebApp.zip not found"
+              if (!$zip) {
+                throw "WebApp.zip not found"
               }
 
               Expand-Archive `
-                -Path $zip.FullName `
-                -DestinationPath "$(WebsitePath)" `
+                $zip.FullName `
+                "$(WebsitePath)" `
                 -Force
+
 
               $app = Join-Path "$(WebsitePath)" "appsettings.json"
 
               if (Test-Path $app) {
 
-                  $cfg = Get-Content $app -Raw | ConvertFrom-Json
+                $cfg =
+                  Get-Content $app -Raw |
+                  ConvertFrom-Json
 
-                  $cfg.SmtpServer = "$(SmtpServer)"
-                  $cfg.Port = [int]"$(Port)"
-                  $cfg.SenderName = "$(SenderName)"
-                  $cfg.SenderEmail = "$(SenderEmail)"
-                  $cfg.Username = "$(Username)"
-                  $cfg.Password = "$(Password)"
+                $cfg.SmtpServer="$(SmtpServer)"
+                $cfg.Port=[int]"$(Port)"
+                $cfg.SenderName="$(SenderName)"
+                $cfg.SenderEmail="$(SenderEmail)"
+                $cfg.Username="$(Username)"
+                $cfg.Password="$(Password)"
 
-                  $cfg |
-                    ConvertTo-Json -Depth 100 |
-                    Set-Content $app
+                $cfg |
+                  ConvertTo-Json -Depth 100 |
+                  Set-Content $app
               }
 
-              if (Get-WebAppPoolState -Name "$(Name)" -ErrorAction SilentlyContinue) {
-                  Restart-WebAppPool "$(Name)"
+
+              if (Test-Path IIS:\AppPools\$(Name)) {
+
+                Restart-WebAppPool "$(Name)"
+
               }
 
-              Write-Host "Deployment completed successfully"
+              Write-Host "Deployment Completed"
 
             displayName: Deploy IIS Application
