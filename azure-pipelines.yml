@@ -85,7 +85,6 @@ stages:
         PathtoPublish: "$(Build.ArtifactStagingDirectory)"
         ArtifactName: "$(ArtifactName)"
 
-
 # ======================
 # DEPLOY
 # ======================
@@ -101,7 +100,9 @@ stages:
 
     timeoutInMinutes: 60
 
-    environment: ${{ parameters.environment }}
+    environment:
+      name: ${{ parameters.environment }}
+      resourceType: VirtualMachine
 
     strategy:
 
@@ -125,19 +126,29 @@ stages:
               Write-Host "Machine:"
               hostname
 
+              Write-Host "Computer:"
+              $env:COMPUTERNAME
+
+              Write-Host "OS:"
+              $env:OS
+
+              Get-PSDrive
+
               Get-ChildItem "$(Pipeline.Workspace)" -Recurse
 
             displayName: Verify Deployment Target
 
-
           - powershell: |
 
+              Import-Module WebAdministration
 
-              if (!(Test-Path "$(WebsitePath)")) {
+              $websitePath = "$(WebsitePath)"
+
+              if (!(Test-Path $websitePath)) {
 
                 New-Item `
                   -ItemType Directory `
-                  -Path "$(WebsitePath)" `
+                  -Path $websitePath `
                   -Force
 
               }
@@ -153,12 +164,11 @@ stages:
               }
 
               Expand-Archive `
-                $zip.FullName `
-                "$(WebsitePath)" `
+                -Path $zip.FullName `
+                -DestinationPath $websitePath `
                 -Force
 
-
-              $app = Join-Path "$(WebsitePath)" "appsettings.json"
+              $app = Join-Path $websitePath "appsettings.json"
 
               if (Test-Path $app) {
 
@@ -178,8 +188,7 @@ stages:
                   Set-Content $app
               }
 
-
-              if (Test-Path IIS:\AppPools\$(Name)) {
+              if (Test-Path "IIS:\AppPools\$(Name)") {
 
                 Restart-WebAppPool "$(Name)"
 
