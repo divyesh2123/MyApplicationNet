@@ -132,7 +132,6 @@ stages:
 
           - powershell: |
 
-              Import-Module WebAdministration
 
               if (!(Test-Path "$(WebsitePath)")) {
 
