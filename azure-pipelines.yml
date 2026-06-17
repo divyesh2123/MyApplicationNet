@@ -12,11 +12,6 @@ parameters:
   - DEV
   - UAT
 
-- name: deploydb
-  displayName: Deploy DB
-  type: boolean
-  default: false
-
 variables:
 - group: ${{ parameters.environment }}
 
@@ -34,9 +29,9 @@ variables:
 
 stages:
 
-# ======================
+# =====================================
 # BUILD
-# ======================
+# =====================================
 
 - stage: Build
   displayName: Build
@@ -44,6 +39,7 @@ stages:
   jobs:
 
   - job: Compile
+    displayName: Compile Application
 
     pool:
       vmImage: windows-latest
@@ -64,6 +60,8 @@ stages:
     - task: VSBuild@1
       inputs:
         solution: "$(solution)"
+        platform: "$(BuildPlatform)"
+        configuration: "$(BuildConfiguration)"
         msbuildArgs: >
           /p:DeployOnBuild=true
           /p:WebPublishMethod=Package
@@ -71,9 +69,6 @@ stages:
           /p:SkipInvalidConfigurations=true
           /p:DesktopBuildPackageLocation="$(Build.ArtifactStagingDirectory)\WebApp.zip"
           /p:DeployIisAppPath="Default Web Site"
-
-        platform: "$(BuildPlatform)"
-        configuration: "$(BuildConfiguration)"
 
     - task: VSTest@2
       inputs:
@@ -85,24 +80,26 @@ stages:
         PathtoPublish: "$(Build.ArtifactStagingDirectory)"
         ArtifactName: "$(ArtifactName)"
 
-# ======================
+# =====================================
 # DEPLOY
-# ======================
+# =====================================
 
 - stage: Deploy
+  displayName: Deploy
 
   dependsOn: Build
   condition: succeeded()
 
   jobs:
 
-  - deployment: Deploy
+  - deployment: DeployToEC2
 
-    timeoutInMinutes: 60
+    displayName: Deploy To EC2
 
     environment:
-      name: ${{ parameters.environment }}
+      name: DEV
       resourceType: VirtualMachine
+      resourceName: EC2AMAZ-9C03K99
 
     strategy:
 
@@ -123,14 +120,13 @@ stages:
 
           - powershell: |
 
-              Write-Host "Machine:"
+              Write-Host "================================"
+              Write-Host "DEPLOYMENT TARGET"
+              Write-Host "================================"
+
               hostname
-
-              Write-Host "Computer:"
+              whoami
               $env:COMPUTERNAME
-
-              Write-Host "OS:"
-              $env:OS
 
               Get-PSDrive
 
@@ -144,13 +140,12 @@ stages:
 
               $websitePath = "$(WebsitePath)"
 
-              if (!(Test-Path $websitePath)) {
-
-                New-Item `
-                  -ItemType Directory `
-                  -Path $websitePath `
-                  -Force
-
+              if (!(Test-Path $websitePath))
+              {
+                  New-Item `
+                    -ItemType Directory `
+                    -Path $websitePath `
+                    -Force
               }
 
               $zip = Get-ChildItem `
@@ -159,8 +154,9 @@ stages:
                 -Filter WebApp.zip |
                 Select-Object -First 1
 
-              if (!$zip) {
-                throw "WebApp.zip not found"
+              if (!$zip)
+              {
+                  throw "WebApp.zip not found"
               }
 
               Expand-Archive `
@@ -168,32 +164,11 @@ stages:
                 -DestinationPath $websitePath `
                 -Force
 
-              $app = Join-Path $websitePath "appsettings.json"
-
-              if (Test-Path $app) {
-
-                $cfg =
-                  Get-Content $app -Raw |
-                  ConvertFrom-Json
-
-                $cfg.SmtpServer="$(SmtpServer)"
-                $cfg.Port=[int]"$(Port)"
-                $cfg.SenderName="$(SenderName)"
-                $cfg.SenderEmail="$(SenderEmail)"
-                $cfg.Username="$(Username)"
-                $cfg.Password="$(Password)"
-
-                $cfg |
-                  ConvertTo-Json -Depth 100 |
-                  Set-Content $app
+              if (Test-Path "IIS:\AppPools\$(Name)")
+              {
+                  Restart-WebAppPool "$(Name)"
               }
 
-              if (Test-Path "IIS:\AppPools\$(Name)") {
-
-                Restart-WebAppPool "$(Name)"
-
-              }
-
-              Write-Host "Deployment Completed"
+              Write-Host "Deployment Completed Successfully"
 
             displayName: Deploy IIS Application
