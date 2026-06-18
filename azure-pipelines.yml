@@ -57,18 +57,15 @@ stages:
       inputs:
         restoreSolution: "$(solution)"
 
-    - task: VSBuild@1
+    - task: DotNetCoreCLI@2
+      displayName: Publish Application
       inputs:
-        solution: "$(solution)"
-        platform: "$(BuildPlatform)"
-        configuration: "$(BuildConfiguration)"
-        msbuildArgs: >
-          /p:DeployOnBuild=true
-          /p:WebPublishMethod=Package
-          /p:PackageAsSingleFile=true
-          /p:SkipInvalidConfigurations=true
-          /p:DesktopBuildPackageLocation="$(Build.ArtifactStagingDirectory)\WebApp.zip"
-          /p:DeployIisAppPath="Default Web Site"
+        command: publish
+        publishWebProjects: true
+        arguments: >
+          --configuration $(BuildConfiguration)
+          --output $(Build.ArtifactStagingDirectory)\publish
+        zipAfterPublish: false
 
     - task: VSTest@2
       inputs:
@@ -77,7 +74,7 @@ stages:
 
     - task: PublishBuildArtifacts@1
       inputs:
-        PathtoPublish: "$(Build.ArtifactStagingDirectory)"
+        PathtoPublish: "$(Build.ArtifactStagingDirectory)\publish"
         ArtifactName: "$(ArtifactName)"
 
 # =====================================
@@ -148,21 +145,33 @@ stages:
                     -Force
               }
 
-              $zip = Get-ChildItem `
-                "$(Pipeline.Workspace)" `
+              Copy-Item `
+                "$(Pipeline.Workspace)\$(ArtifactName)\*" `
+                $websitePath `
                 -Recurse `
-                -Filter WebApp.zip |
-                Select-Object -First 1
-
-              if (!$zip)
-              {
-                  throw "WebApp.zip not found"
-              }
-
-              Expand-Archive `
-                -Path $zip.FullName `
-                -DestinationPath $websitePath `
                 -Force
+
+              $appSettingsFile = Join-Path $websitePath "appsettings.json"
+
+              if (Test-Path $appSettingsFile)
+              {
+                  $json = Get-Content $appSettingsFile -Raw | ConvertFrom-Json
+
+                  $json.EmailSettings.SmtpServer = "$(SmtpServer)"
+                  $json.EmailSettings.Port = [int]"$(Port)"
+                  $json.EmailSettings.SenderName = "$(SenderName)"
+                  $json.EmailSettings.SenderEmail = "$(SenderEmail)"
+                  $json.EmailSettings.Username = "$(Username)"
+                  $json.EmailSettings.Password = "$(Password)"
+
+                  $json | ConvertTo-Json -Depth 10 | Set-Content $appSettingsFile
+
+                  Write-Host "EmailSettings updated successfully"
+              }
+              else
+              {
+                  Write-Host "appsettings.json not found"
+              }
 
               if (Test-Path "IIS:\AppPools\$(Name)")
               {
@@ -172,3 +181,4 @@ stages:
               Write-Host "Deployment Completed Successfully"
 
             displayName: Deploy IIS Application
+
